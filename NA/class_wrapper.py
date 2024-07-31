@@ -301,29 +301,29 @@ class Network(object):
         """
 
         # Initialize the geometry_eval or the initial guess xs
-        geometry_eval = self.initialize_geometry_eval()
+        geometry_eval = self.initialize_geometry_eval() #algorithm 
         # Set up the learning schedule and optimizer
         self.optm_eval = self.make_optimizer_eval(geometry_eval)#, optimizer_type='SGD')
         self.lr_scheduler = self.make_lr_scheduler(self.optm_eval)
         
         # expand the target spectra to eval batch size
-        target_spectra_expand = target_spectra.expand([self.flags.eval_batch_size, -1])
+        target_spectra_expand = target_spectra.expand([self.flags.eval_batch_size, -1]) #expand y value matrix size
 
         # Begin NA
-        for i in range(self.flags.backprop_step):
+        for i in range(self.flags.backprop_step): # a hyperparameter
             # Make the initialization from [-1, 1], can only be in loop due to gradient calculator constraint
             geometry_eval_input = self.initialize_from_uniform_to_dataset_distrib(geometry_eval)
             if save_misc and ind == 0 and i == 0:                       # save the modified initial guess to verify distribution
                 np.savetxt('geometry_initialization.csv',geometry_eval_input.cpu().data.numpy())
             self.optm_eval.zero_grad()                                  # Zero the gradient first
-            logit = self.model(geometry_eval_input)                     # Get the output
+            logit = self.model(geometry_eval_input)                     # Get the output, f(g) that is fixed
             ###################################################
             # Boundar loss controled here: with Boundary Loss #
             ###################################################
             loss = self.make_loss(logit, target_spectra_expand, G=geometry_eval_input)         # Get the loss
             loss.backward()                                             # Calculate the Gradient
             # update weights and learning rate scheduler
-            if i != self.flags.backprop_step - 1:
+            if i != self.flags.backprop_step - 1: # Dont update at the end step for some reason?
                 self.optm_eval.step()  # Move one step the optimizer
                 self.lr_scheduler.step(loss.data)
         
@@ -359,14 +359,15 @@ class Network(object):
         ###################################
         Ypred = logit.cpu().data.numpy()
 
-        if len(np.shape(Ypred)) == 1:           # If this is the ballistics dataset where it only has 1d y'
+        if len(np.shape(Ypred)) == 1:  #We dont want it to not be a 1D array sometimes. It depends on geometry of the output
+            # If this is the ballistics dataset where it only has 1d y'
             Ypred = np.reshape(Ypred, [-1, 1])
         
-        # calculate the MSE list and get the best one
+        # calculate the MSE list and get the best one (because MSE not necessarily equal the loss because loss can have a lot of different components. Works here but not in future)
         MSE_list = np.mean(np.square(Ypred - target_spectra_expand.cpu().data.numpy()), axis=1)
-        best_estimate_index = np.argmin(MSE_list)
+        best_estimate_index = np.argmin(MSE_list) #min
         print("The best performing one is:", best_estimate_index)
-        Xpred_best = np.reshape(np.copy(geometry_eval_input.cpu().data.numpy()[best_estimate_index, :]), [1, -1])
+        Xpred_best = np.reshape(np.copy(geometry_eval_input.cpu().data.numpy()[best_estimate_index, :]), [1, -1]) #copy and reshape to 2d array(in this case). Just to be safe and allow matrix multiplication
         if save_Simulator_Ypred:
             Ypred = simulator(self.flags.data_set, geometry_eval_input.cpu().data.numpy())
             if len(np.shape(Ypred)) == 1:           # If this is the ballistics dataset where it only has 1d y'
@@ -396,11 +397,12 @@ class Network(object):
             geomtry_eval = self.build_tensor(numpy_geometry, requires_grad=True)
             print("robotic_arm specific initialization")
         else:
-            geomtry_eval = torch.rand([self.flags.eval_batch_size, self.flags.linear[0]], requires_grad=True, device='cuda')
+            geomtry_eval = torch.rand([self.flags.eval_batch_size, self.flags.linear[0]], requires_grad=True, device='cuda') #randomizer
         #geomtry_eval = torch.randn([self.flags.eval_batch_size, self.flags.linear[0]], requires_grad=True, device='cuda')
         return geomtry_eval
 
-    def initialize_from_uniform_to_dataset_distrib(self, geometry_eval):
+    def initialize_from_uniform_to_dataset_distrib(self, geometry_eval): #literally is to set the input range between [-1,1].
+        # We do this for forward and inverse design for input to make input mean zero. It helps.
         """
         since the initialization of the backprop is uniform from [0,1], this function transforms that distribution
         to suitable prior distribution for each dataset. The numbers are accquired from statistics of min and max
